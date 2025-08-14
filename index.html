@@ -1,0 +1,164 @@
+<!doctype html>
+<html lang="en" class="h-full">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>MonoDiff — Minimal Text/JSON Diff</title>
+    <meta name="description" content="A modern, minimal diff viewer for text and JSON with smooth navigation and Tailwind UI." />
+
+    <!-- TailwindCSS CDN (for prototyping) -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+      tailwind.config = {
+        theme: {
+          extend: {
+            fontFamily: {
+              sans: ["Inter", "ui-sans-serif", "system-ui", "-apple-system", "Segoe UI", "Roboto", "Helvetica Neue", "Arial", "Noto Sans", "Apple Color Emoji", "Segoe UI Emoji"],
+              mono: ["JetBrains Mono", "ui-monospace", "SFMono-Regular", "Menlo", "Monaco", "Consolas", "Liberation Mono", "monospace"],
+            },
+            colors: {
+              base: {
+                50: "#0b0f14",
+                100: "#0f141b",
+                900: "#e5f0ff",
+              },
+            },
+            boxShadow: {
+              soft: "0 6px 30px -12px rgba(0,0,0,0.4)",
+            },
+          },
+        },
+        darkMode: 'class'
+      }
+    </script>
+
+    <!-- Fonts -->
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet">
+
+    <!-- jsdiff -->
+    <script src="https://unpkg.com/diff@5.2.0/dist/diff.min.js"></script>
+
+    <style>
+      /* Minimal scrollbar */
+      ::-webkit-scrollbar { height: 10px; width: 10px; }
+      ::-webkit-scrollbar-thumb { background: rgba(148,163,184,.4); border-radius: 8px; }
+      ::-webkit-scrollbar-thumb:hover { background: rgba(148,163,184,.7); }
+
+      /* Diff token transitions */
+      .diff-token { transition: background-color .35s ease, color .35s ease; }
+      .diff-focus { outline: 2px solid rgba(99,102,241,.6); outline-offset: 2px; }
+
+      /* Smooth collapsing */
+      .collapse { transition: max-height .45s cubic-bezier(0.2, 0.8, 0.2, 1), opacity .35s ease; overflow: hidden; }
+
+      /* Light theme overrides */
+      .theme-light header.sticky { background-color: rgba(255,255,255,0.9) !important; border-color: rgba(0,0,0,0.06) !important; }
+      .theme-light [data-soft] { background: rgba(0,0,0,0.04); border: 1px solid rgba(0,0,0,0.08); color: #0f172a; }
+      .theme-light [data-soft]:hover { background: rgba(0,0,0,0.08); color: #0b1220; }
+      .theme-light .floating { background: rgba(255,255,255,0.9) !important; border-color: rgba(0,0,0,0.06) !important; }
+      /* Make floating nav buttons transparent in light mode to avoid grey squares */
+      .theme-light .floating [data-soft] { background: transparent !important; border-color: transparent !important; color: #0f172a; }
+      .theme-light .floating [data-soft]:hover { background: rgba(0,0,0,0.06) !important; }
+      .theme-light [data-soft].soft-selected { background: #e5e7eb; border-color: #cbd5e1; color: #0f172a; }
+      .theme-light [data-soft]:focus { outline: none; box-shadow: 0 0 0 2px rgba(59,130,246,0.18); }
+    </style>
+  </head>
+  <body class="h-full bg-base-50 text-slate-200 selection:bg-indigo-500/30">
+    <div class="min-h-full">
+      <!-- Header -->
+      <header class="sticky top-0 z-40 backdrop-blur supports-backdrop-blur:bg-base-50/70 bg-base-50/80 border-b border-white/5">
+        <div class="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8 py-4 flex items-center justify-between">
+          <div class="flex items-center gap-3">
+            <div class="h-8 w-8 rounded-xl bg-indigo-500/20 text-indigo-400 grid place-items-center font-semibold">Δ</div>
+            <h1 class="text-lg sm:text-xl font-semibold tracking-tight">MonoDiff</h1>
+          </div>
+          <div class="flex items-center gap-2 text-xs sm:text-sm">
+            <button id="themeToggle" data-soft class="px-3 py-1.5 rounded-lg bg-white/5 hover:bg-white/10 text-slate-300 transition" title="Toggle theme">🌙</button>
+          </div>
+        </div>
+      </header>
+
+      <!-- Controls -->
+      <section class="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8 mt-6">
+        <div class="grid grid-cols-1 lg:grid-cols-2 gap-4">
+          <div class="rounded-2xl bg-white/5 border border-white/10 shadow-soft">
+            <div class="flex items-center justify-between px-4 py-3 border-b border-white/10">
+              <div class="flex items-center gap-2">
+                <span class="text-xs uppercase tracking-wider text-slate-400">Input A</span>
+              </div>
+              <div class="flex items-center gap-2">
+                <button id="pasteA" data-soft class="px-3 py-1.5 rounded-lg bg-white/5 hover:bg-white/10 text-slate-300 text-xs transition">Paste</button>
+                <button id="clearA" data-soft class="px-3 py-1.5 rounded-lg bg-white/5 hover:bg-white/10 text-slate-300 text-xs transition">Clear</button>
+              </div>
+            </div>
+            <textarea id="inputA" class="w-full h-56 lg:h-64 p-4 bg-transparent outline-none font-mono text-sm" spellcheck="false" placeholder="Enter text or JSON..."></textarea>
+          </div>
+          <div class="rounded-2xl bg-white/5 border border-white/10 shadow-soft">
+            <div class="flex items-center justify-between px-4 py-3 border-b border-white/10">
+              <div class="flex items-center gap-2">
+                <span class="text-xs uppercase tracking-wider text-slate-400">Input B</span>
+              </div>
+              <div class="flex items-center gap-2">
+                <button id="pasteB" data-soft class="px-3 py-1.5 rounded-lg bg-white/5 hover:bg-white/10 text-slate-300 text-xs transition">Paste</button>
+                <button id="clearB" data-soft class="px-3 py-1.5 rounded-lg bg-white/5 hover:bg-white/10 text-slate-300 text-xs transition">Clear</button>
+              </div>
+            </div>
+            <textarea id="inputB" class="w-full h-56 lg:h-64 p-4 bg-transparent outline-none font-mono text-sm" spellcheck="false" placeholder="Enter text or JSON..."></textarea>
+          </div>
+        </div>
+
+        <!-- Actions -->
+        <div class="mt-4 flex flex-wrap items-center gap-3">
+          <div class="inline-flex items-center bg-white/5 border border-white/10 rounded-xl overflow-hidden">
+            <button data-mode="text" data-soft class="mode-btn px-3 py-2 text-sm text-slate-300 hover:bg-white/10 transition">Text</button>
+            <button data-mode="json" data-soft class="mode-btn px-3 py-2 text-sm text-slate-300 hover:bg-white/10 transition">JSON</button>
+          </div>
+
+          <button id="onlyChangesToggle" data-soft class="inline-flex items-center gap-3 bg-white/5 border border-white/10 rounded-xl px-3 py-2 text-sm text-slate-300 hover:bg-white/10 transition" aria-pressed="false">
+            <span class="toggle-track relative inline-flex h-5 w-9 items-center rounded-full bg-white/10 border border-white/10">
+              <span class="toggle-dot inline-block h-4 w-4 translate-x-0.5 rounded-full bg-slate-400 transition-transform"></span>
+            </span>
+            <span>Only changes</span>
+          </button>
+
+          <div class="inline-flex items-center bg-white/5 border border-white/10 rounded-xl overflow-hidden">
+            <button data-view="unified" data-soft class="view-btn px-3 py-2 text-sm text-slate-300 hover:bg-white/10 transition">Unified</button>
+            <button data-view="split" data-soft class="view-btn px-3 py-2 text-sm text-slate-300 hover:bg-white/10 transition">Split</button>
+          </div>
+
+          <div class="inline-flex items-center bg-white/5 border border-white/10 rounded-xl overflow-hidden">
+            <button data-token="word" data-soft class="token-btn px-3 py-2 text-sm text-slate-300 hover:bg-white/10 transition">Word</button>
+            <button data-token="char" data-soft class="token-btn px-3 py-2 text-sm text-slate-300 hover:bg-white/10 transition">Char</button>
+          </div>
+
+          <button id="swapInputs" data-soft class="ml-auto px-3 py-2 rounded-xl bg-white/5 hover:bg-white/10 border border-white/10 text-slate-300 text-sm transition">Swap A↔B</button>
+        </div>
+      </section>
+
+      <!-- Diff Output -->
+      <main class="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8 mt-6 mb-12">
+        <div id="diffContainer" class="rounded-2xl bg-white/5 border border-white/10 shadow-soft">
+          <div class="px-4 py-3 border-b border-white/10 flex items-center justify-between">
+            <div class="text-xs uppercase tracking-wider text-slate-400">Diff</div>
+            <div id="summary" class="text-xs text-slate-400"></div>
+          </div>
+          <div id="diffOutput" class="font-mono text-sm leading-6 p-4 overflow-auto"></div>
+        </div>
+      </main>
+    </div>
+
+    <!-- Floating Nav Controls -->
+    <div class="fixed right-4 bottom-4 z-50 floating flex items-center gap-2 bg-white/5 border border-white/10 rounded-2xl shadow-soft backdrop-blur px-2 py-1">
+      <button id="prevBtn" data-soft class="px-3 py-2 text-sm text-slate-300 hover:bg-white/10 transition">Prev</button>
+      <div class="px-2 text-xs text-slate-400" id="navCounter">0 / 0</div>
+      <button id="nextBtn" data-soft class="px-3 py-2 text-sm text-slate-300 hover:bg-white/10 transition">Next</button>
+      <div class="h-5 w-px bg-white/10 mx-1"></div>
+      <button id="topBtn" data-soft class="px-3 py-2 text-sm text-slate-300 hover:bg-white/10 transition" title="Back to top">Top</button>
+    </div>
+
+    
+
+    <script type="module" src="./assets/app.js"></script>
+  </body>
+</html>
