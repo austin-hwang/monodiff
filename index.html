@@ -4,6 +4,8 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>MonoDiff — Minimal Text/JSON Diff</title>
+    <link rel="icon" type="image/svg+xml" href="assets/favicon.svg" />
+    <link rel="alternate icon" href="assets/favicon.svg" />
     <meta name="description" content="A modern, minimal diff viewer for text and JSON with smooth navigation and Tailwind UI." />
 
     <!-- TailwindCSS CDN (for prototyping) -->
@@ -110,16 +112,15 @@
 
         <!-- Actions -->
         <div class="mt-4 flex flex-wrap items-center gap-3">
-          <div class="inline-flex items-center bg-white/5 border border-white/10 rounded-xl overflow-hidden">
-            <button data-mode="text" data-soft class="mode-btn px-3 py-2 text-sm text-slate-300 hover:bg-white/10 transition">Text</button>
-            <button data-mode="json" data-soft class="mode-btn px-3 py-2 text-sm text-slate-300 hover:bg-white/10 transition">JSON</button>
-          </div>
-
-          <button id="onlyChangesToggle" data-soft class="inline-flex items-center gap-3 bg-white/5 border border-white/10 rounded-xl px-3 py-2 text-sm text-slate-300 hover:bg-white/10 transition" aria-pressed="false">
+          <button id="onlyChangesToggle" data-soft class="inline-flex items-center gap-3 bg-white/5 border border-white/10 rounded-xl px-3 py-2 text-sm text-slate-300 hover:bg-white/10 transition" aria-pressed="false" title="Only changes" aria-label="Only changes">
             <span class="toggle-track relative inline-flex h-5 w-9 items-center rounded-full bg-white/10 border border-white/10">
               <span class="toggle-dot inline-block h-4 w-4 translate-x-0.5 rounded-full bg-slate-400 transition-transform"></span>
             </span>
-            <span>Only changes</span>
+            <!-- Eye icon (show/hide) -->
+            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" class="h-4 w-4 text-slate-300">
+              <path d="M1.5 12s3.75-7.5 10.5-7.5S22.5 12 22.5 12 18.75 19.5 12 19.5 1.5 12 1.5 12Zm10.5 3a3 3 0 1 0 0-6 3 3 0 0 0 0 6Z"/>
+            </svg>
+            <span class="sr-only">Only changes</span>
           </button>
 
           <div class="inline-flex items-center bg-white/5 border border-white/10 rounded-xl overflow-hidden">
@@ -128,11 +129,14 @@
           </div>
 
           <div class="inline-flex items-center bg-white/5 border border-white/10 rounded-xl overflow-hidden">
+            <button data-token="line" data-soft class="token-btn px-3 py-2 text-sm text-slate-300 hover:bg-white/10 transition">Line</button>
             <button data-token="word" data-soft class="token-btn px-3 py-2 text-sm text-slate-300 hover:bg-white/10 transition">Word</button>
             <button data-token="char" data-soft class="token-btn px-3 py-2 text-sm text-slate-300 hover:bg-white/10 transition">Char</button>
           </div>
 
-          <button id="swapInputs" data-soft class="ml-auto px-3 py-2 rounded-xl bg-white/5 hover:bg-white/10 border border-white/10 text-slate-300 text-sm transition">Swap A↔B</button>
+          <button id="beautifyBtn" data-soft class="px-3 py-2 rounded-xl bg-white/5 hover:bg-white/10 border border-white/10 text-slate-300 text-sm transition" title="Beautify JSON in inputs">Beautify</button>
+
+          <button id="swapInputs" data-soft class="ml-auto px-3 py-2 rounded-xl bg-white/5 hover:bg-white/10 border border-white/10 text-slate-300 text-sm transition" title="Swap A and B" aria-label="Swap inputs">⇄</button>
         </div>
       </section>
 

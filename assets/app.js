@@ -16,6 +16,7 @@ const els = {
   onlyChangesToggle: $('#onlyChangesToggle'),
   topBtn: $('#topBtn'),
   themeToggle: $('#themeToggle'),
+  beautifyBtn: $('#beautifyBtn'),
   swapInputs: $('#swapInputs'),
   diffOutput: $('#diffOutput'),
   diffContainer: $('#diffContainer'),
@@ -33,6 +34,7 @@ let state = {
   changeIndex: 0,
   granularity: 'line', // 'line' | 'inline'
   token: 'word', // 'word' | 'char' (for inline granularity)
+  jsonTokenActive: false, // when true, use word/char inline diff for JSON
   onlyChanges: false,
   aText: '',
   bText: '',
@@ -59,6 +61,7 @@ function setMode(newMode) {
 
 function setView(newView) {
   state.view = newView
+  try { localStorage.setItem('view', newView) } catch {}
   const dark = state.theme !== 'light'
   els.viewBtns.forEach((b) => {
     const on = b.dataset.view === newView
@@ -76,6 +79,17 @@ function setView(newView) {
 
 function setToken(newToken) {
   state.token = newToken
+  // If user selects Line, force line diff (also for JSON). Otherwise enable inline for JSON.
+  state.jsonTokenActive = newToken !== 'line'
+  try { localStorage.setItem('token', newToken) } catch {}
+  // Show Only Changes toggle only in line mode; disable it when hiding
+  if (els.onlyChangesToggle) {
+    const show = newToken === 'line'
+    els.onlyChangesToggle.style.display = show ? '' : 'none'
+    if (!show && state.onlyChanges) {
+      setOnlyChanges(false)
+    }
+  }
   const dark = state.theme !== 'light'
   els.tokenBtns.forEach((b) => {
     const on = b.dataset.token === newToken
@@ -94,6 +108,7 @@ function setToken(newToken) {
 
 function setOnlyChanges(on) {
   state.onlyChanges = on
+  try { localStorage.setItem('onlyChanges', on ? '1' : '0') } catch {}
   if (els.onlyChangesToggle) {
     els.onlyChangesToggle.setAttribute('aria-pressed', on ? 'true' : 'false')
     const dot = els.onlyChangesToggle.querySelector('.toggle-dot')
@@ -117,24 +132,47 @@ function prettyJSON(input) {
   }
 }
 
+// Auto-detect helper: is the given string valid JSON?
+function isJSON(str) {
+  if (typeof str !== 'string') return false
+  const s = str.trim()
+  if (!s) return false
+  try {
+    JSON.parse(s)
+    return true
+  } catch {
+    return false
+  }
+}
+
 function computeDiff(a, b, mode) {
   if (mode === 'json') {
     a = prettyJSON(a)
     b = prettyJSON(b)
+    if (state.token === 'line') {
+      state.granularity = 'line'
+      return Diff.diffLines(a, b, { newlineIsToken: true })
+    }
+    if (state.jsonTokenActive) {
+      // Inline token diff for JSON when user chose Word/Char
+      state.granularity = 'inline'
+      return state.token === 'char' ? Diff.diffChars(a, b) : Diff.diffWordsWithSpace(a, b)
+    }
   }
   // Text: prefer line diff, fallback to word diff for single-line inputs
   if (mode === 'text') {
-    const hasNewlines = a.includes('\n') || b.includes('\n')
-    state.granularity = hasNewlines ? 'line' : 'inline'
-    if (hasNewlines) {
-      return Diff.diffLines(a, b, { newlineIsToken: false })
-    } else {
-      return state.token === 'char' ? Diff.diffChars(a, b) : Diff.diffWords(a, b)
+    if (state.token === 'line') {
+      state.granularity = 'line'
+      return Diff.diffLines(a, b, { newlineIsToken: true })
     }
+    // When user chose Word/Char for text, always do inline diff across the whole string
+    // so differences like space vs newline are highlighted minimally.
+    state.granularity = 'inline'
+    return state.token === 'char' ? Diff.diffChars(a, b) : Diff.diffWordsWithSpace(a, b)
   }
   // Default to line-based
   state.granularity = 'line'
-  return Diff.diffLines(a, b, { newlineIsToken: false })
+  return Diff.diffLines(a, b, { newlineIsToken: true })
 }
 
 function summarize(chunks) {
@@ -155,9 +193,11 @@ function unitCount(c) {
   if (state.granularity === 'line') {
     if (typeof c.count === 'number') return c.count
     // fallback: count lines
-    const s = c.value.replace(/\n$/, '')
-    if (!s) return 0
-    return s.split('\n').length
+    if (c.value === '\n') return 1
+    const parts = c.value.split('\n')
+    // If the value ended with a trailing newline, split will include a final empty string;
+    // since newlineIsToken=true, that trailing newline should arrive as its own token, so we count as-is.
+    return parts.filter(() => true).length
   }
   // inline granularity: count tokens according to state.token
   if (state.token === 'char') {
@@ -182,22 +222,27 @@ function renderUnified(chunks, { onlyChanges }) {
   let blockId = 0
   for (const ch of chunks) {
     const isChange = !!(ch.added || ch.removed)
-    const lines = ch.value.replace(/\n$/, '').split('\n')
+    // Preserve newline tokens: if value is exactly "\n", render as a single visible literal
+    const lines = ch.value === '\n' ? ['\\n'] : ch.value.split('\n')
     const block = document.createElement('div')
     block.dataset.blockId = String(blockId++)
     block.className = 'transition-colors'
 
     if (!isChange && onlyChanges) {
       // Collapsed spacer for unchanged block
-      const count = lines.filter((l) => l.length > 0).length
+      const count = lines.length
+      const startAt = state.uniLine
+      // advance global line counter to keep following change blocks aligned
+      state.uniLine += count || 0
+
       const spacer = document.createElement('button')
       spacer.type = 'button'
       spacer.className = 'collapse w-full max-h-14 opacity-70 hover:opacity-100 text-xs text-slate-400 px-3 py-2 my-1 rounded-lg border border-white/10 bg-white/5'
       spacer.textContent = count > 0 ? `··· ${count} unchanged line${count !== 1 ? 's' : ''} ···` : ' '
       spacer.addEventListener('click', () => {
-        // Toggle showing this block on demand
+        // Expand with correct starting line numbers
         spacer.remove()
-        const full = renderLines(lines, 'unchanged')
+        const full = renderLinesAt(lines, 'unchanged', startAt)
         block.appendChild(full)
       })
       block.appendChild(spacer)
@@ -239,7 +284,7 @@ function renderSplit(chunks, { onlyChanges }) {
 
   // Pair removed with subsequent added when possible
   const pairs = []
-  const toLines = (c) => c.value.replace(/\n$/, '').split('\n')
+  const toLines = (c) => (c.value === '\n' ? ['\\n'] : c.value.split('\n'))
   let i = 0
   while (i < chunks.length) {
     const c = chunks[i]
@@ -269,13 +314,19 @@ function renderSplit(chunks, { onlyChanges }) {
 
     if (p.type === 'equal' && onlyChanges) {
       const count = Math.max(p.left.length, p.right.length)
+      const startL = state.splitLeft
+      const startR = state.splitRight
+      // advance global counters to keep subsequent change blocks aligned
+      state.splitLeft += p.left.length
+      state.splitRight += p.right.length
+
       const spacer = document.createElement('button')
       spacer.type = 'button'
       spacer.className = 'collapse w-full max-h-14 opacity-70 hover:opacity-100 text-xs text-slate-400 px-3 py-2 my-1 rounded-lg border border-white/10 bg-white/5'
       spacer.textContent = count > 0 ? `··· ${count} unchanged line${count !== 1 ? 's' : ''} ···` : ' '
       spacer.addEventListener('click', () => {
         spacer.remove()
-        block.appendChild(renderSplitRowGroup(p))
+        block.appendChild(renderSplitRowGroupAt(p, startL, startR))
       })
       block.appendChild(spacer)
     } else {
@@ -338,6 +389,48 @@ function renderSplitRowGroup(p) {
   return wrap
 }
 
+// Render split rows starting from explicit line numbers without mutating global counters
+function renderSplitRowGroupAt(p) {
+  const wrap = document.createElement('div')
+  wrap.className = 'grid grid-cols-2 gap-3'
+
+  const leftCol = document.createElement('div')
+  const rightCol = document.createElement('div')
+
+  let startL = arguments[1]
+  let startR = arguments[2]
+  const maxLen = Math.max(p.left.length, p.right.length)
+  for (let idx = 0; idx < maxLen; idx++) {
+    const l = p.left[idx]
+    const r = p.right[idx]
+    const leftRow = document.createElement('div')
+    const rightRow = document.createElement('div')
+    if (p.type === 'equal') {
+      leftRow.className = rowClass('unchanged')
+      rightRow.className = rowClass('unchanged')
+    } else {
+      leftRow.className = rowClass(l !== undefined ? 'removed' : 'unchanged')
+      rightRow.className = rowClass(r !== undefined ? 'added' : 'unchanged')
+    }
+    leftRow.innerHTML = `
+      <div class="w-10 text-right text-xs text-slate-500 tabular-nums select-none pr-1">${l !== undefined ? (startL++) : ''}</div>
+      <div class="min-w-[24px] text-slate-500">${p.type === 'equal' ? ' ' : l !== undefined ? '−' : ' '}</div>
+      <div class="whitespace-pre-wrap break-words flex-1">${escapeHTML(l ?? '')}</div>
+    `
+    rightRow.innerHTML = `
+      <div class="w-10 text-right text-xs text-slate-500 tabular-nums select-none pr-1">${r !== undefined ? (startR++) : ''}</div>
+      <div class="min-w-[24px] text-slate-500">${p.type === 'equal' ? ' ' : r !== undefined ? '+' : ' '}</div>
+      <div class="whitespace-pre-wrap break-words flex-1">${escapeHTML(r ?? '')}</div>
+    `
+    leftCol.appendChild(leftRow)
+    rightCol.appendChild(rightRow)
+  }
+
+  wrap.appendChild(leftCol)
+  wrap.appendChild(rightCol)
+  return wrap
+}
+
 function renderLines(lines, type) {
   const wrap = document.createElement('div')
   for (const ln of lines) {
@@ -353,6 +446,25 @@ function renderLines(lines, type) {
     // increment unified line number if enabled
     if (typeof state.uniLine === 'number') state.uniLine++
 
+    wrap.appendChild(row)
+  }
+  return wrap
+}
+
+// Render unified lines with an explicit starting line number (does not mutate state.uniLine)
+function renderLinesAt(lines, type, startAt) {
+  const wrap = document.createElement('div')
+  let n = startAt
+  for (const ln of lines) {
+    const row = document.createElement('div')
+    row.className = rowClass(type)
+    const symbol = type === 'added' ? '+' : type === 'removed' ? '−' : ' '
+    row.innerHTML = `
+      <div class="w-10 text-right text-xs text-slate-500 tabular-nums select-none pr-1">${n}</div>
+      <div class="min-w-[24px] text-slate-500">${symbol}</div>
+      <div class="whitespace-pre-wrap break-words flex-1">${escapeHTML(ln)}</div>
+    `
+    n++
     wrap.appendChild(row)
   }
   return wrap
@@ -446,7 +558,20 @@ function compare() {
   const b = els.b.value || ''
   state.aText = a
   state.bText = b
-  const chunks = computeDiff(a, b, state.mode)
+  // If both inputs are empty, clear the diff UI entirely
+  if (a === '' && b === '') {
+    state.chunks = []
+    els.diffOutput.innerHTML = ''
+    els.summary.textContent = ''
+    state.changeAnchors = []
+    state.changeIndex = 0
+    updateNavCounter()
+    return
+  }
+  // Auto-detect mode: use JSON mode only if both sides are valid JSON
+  const detectedMode = isJSON(a) && isJSON(b) ? 'json' : 'text'
+  state.mode = detectedMode
+  const chunks = computeDiff(a, b, detectedMode)
   state.chunks = chunks
   renderCurrent()
 }
@@ -656,8 +781,7 @@ function renderWordSplit(chunks) {
 async function tryPaste(target) {
   try {
     const text = await navigator.clipboard.readText()
-    // Beautify JSON when in JSON mode
-    const maybePretty = state.mode === 'json' ? prettyJSON(text) : text
+    const maybePretty = isJSON(text) ? prettyJSON(text) : text
     target.value = maybePretty
     compare()
   } catch (e) {
@@ -668,10 +792,21 @@ async function tryPaste(target) {
 // Event wiring
 function init() {
   // Default mode highlight
-  setMode('text')
-  setView('unified')
-  setToken('word')
-  setOnlyChanges(false)
+  // mode auto-detected; no manual toggle
+  // Restore persisted prefs
+  const savedView = (localStorage.getItem('view') || 'unified')
+  const savedToken = (localStorage.getItem('token') || 'word')
+  const savedOnly = localStorage.getItem('onlyChanges') === '1'
+  const savedA = localStorage.getItem('inputA')
+  const savedB = localStorage.getItem('inputB')
+
+  if (typeof savedA === 'string') els.a.value = savedA
+  if (typeof savedB === 'string') els.b.value = savedB
+
+  // Apply Only Changes first, then token (token may hide/disable it)
+  setOnlyChanges(savedOnly)
+  setView(savedView)
+  setToken(savedToken)
 
   // Theme init
   const applyTheme = (t) => {
@@ -699,7 +834,7 @@ function init() {
     renderCurrent()
   }
   // apply current selections with theme-aware styles
-  setMode(state.mode)
+  // mode auto-detected; no manual toggle
   setView(state.view)
   setToken(state.token)
   // sync Only Changes toggle visuals
@@ -717,19 +852,20 @@ function init() {
       applyTheme(next)
       renderCurrent()
       // reapply selections after theme change
-      setMode(state.mode)
+      // mode auto-detected; no manual toggle
       setView(state.view)
       setToken(state.token)
       updateOnlyChangesUI()
     })
   }
 
-  els.modeBtns.forEach((btn) =>
-    btn.addEventListener('click', () => {
-      setMode(btn.dataset.mode)
-      compare()
-    })
-  )
+  // Remove JSON/Text toggle: disable mode buttons and rely on auto-detect
+  // els.modeBtns.forEach((btn) =>
+  //   btn.addEventListener('click', () => {
+  //     setMode(btn.dataset.mode)
+  //     compare()
+  //   })
+  // )
 
   els.viewBtns.forEach((btn) =>
     btn.addEventListener('click', () => setView(btn.dataset.view))
@@ -767,6 +903,31 @@ function init() {
     })
   }
 
+  // Beautify JSON in both inputs (only for objects/arrays to avoid surprising primitives)
+  if (els.beautifyBtn) {
+    els.beautifyBtn.addEventListener('click', () => {
+      const isObjOrArr = (s) => {
+        if (typeof s !== 'string') return false
+        const t = s.trim()
+        if (!t) return false
+        if (!(t.startsWith('{') || t.startsWith('['))) return false
+        try {
+          const parsed = JSON.parse(t)
+          return parsed !== null && typeof parsed === 'object'
+        } catch {
+          return false
+        }
+      }
+      if (isObjOrArr(els.a.value)) {
+        els.a.value = prettyJSON(els.a.value)
+      }
+      if (isObjOrArr(els.b.value)) {
+        els.b.value = prettyJSON(els.b.value)
+      }
+      compare()
+    })
+  }
+
   // Debounced auto-compare on input changes
   const debounce = (fn, ms = 300) => {
     let t
@@ -775,7 +936,13 @@ function init() {
       t = setTimeout(() => fn(...args), ms)
     }
   }
-  const autoCompare = debounce(compare, 250)
+  const autoCompare = debounce(() => {
+    try {
+      localStorage.setItem('inputA', els.a.value || '')
+      localStorage.setItem('inputB', els.b.value || '')
+    } catch {}
+    compare()
+  }, 250)
   els.a.addEventListener('input', autoCompare)
   els.b.addEventListener('input', autoCompare)
 
@@ -783,17 +950,22 @@ function init() {
   els.pasteB.addEventListener('click', () => tryPaste(els.b))
   els.clearA.addEventListener('click', () => {
     els.a.value = ''
+    try { localStorage.setItem('inputA', '') } catch {}
+    compare()
   })
   els.clearB.addEventListener('click', () => {
     els.b.value = ''
+    try { localStorage.setItem('inputB', '') } catch {}
+    compare()
   })
 
-  // Example content for quick demo
-  const demoA = '{\n  "name": "MonoDiff",\n  "version": 1,\n  "features": ["text", "json"]\n}'
-  const demoB = '{\n  "name": "MonoDiff",\n  "version": 2,\n  "features": ["text", "json", "nav"],\n  "minimal": true\n}'
-  els.a.value = demoA
-  els.b.value = demoB
-  setMode('json')
+  // If no saved inputs, seed demo and compute once
+  if (!savedA && !savedB) {
+    const demoA = '{\n  "name": "MonoDiff",\n  "version": 1,\n  "features": ["text", "json"]\n}'
+    const demoB = '{\n  "name": "MonoDiff",\n  "version": 2,\n  "features": ["text", "json", "nav"],\n  "minimal": true\n}'
+    els.a.value = demoA
+    els.b.value = demoB
+  }
   compare()
 }
 

@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 512 512">
+  <!-- Background: rounded square with indigo-500 at ~20% opacity (#6366F1 with alpha) -->
+  <defs>
+    <linearGradient id="g" x1="0" x2="1" y1="0" y2="1">
+      <stop offset="0%" stop-color="#6366F1" stop-opacity="0.22"/>
+      <stop offset="100%" stop-color="#6366F1" stop-opacity="0.28"/>
+    </linearGradient>
+  </defs>
+  <rect x="32" y="32" width="448" height="448" rx="88" fill="url(#g)"/>
+  <!-- Delta glyph: indigo-400 (#818CF8) -->
+  <g fill="#818CF8">
+    <text x="256" y="304" font-family="'Inter', 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="260" text-anchor="middle" dominant-baseline="middle" font-weight="700">Δ</text>
+  </g>
+</svg>
